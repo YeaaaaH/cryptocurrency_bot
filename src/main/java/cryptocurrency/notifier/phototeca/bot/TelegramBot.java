@@ -2,6 +2,7 @@ package cryptocurrency.notifier.phototeca.bot;
 
 import cryptocurrency.notifier.phototeca.model.User;
 import cryptocurrency.notifier.phototeca.repository.UserRepository;
+import cryptocurrency.notifier.phototeca.service.PriceCheckService;
 import lombok.Getter;
 import lombok.extern.log4j.Log4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,8 +20,6 @@ import java.util.Optional;
 @Log4j
 @Component
 public class TelegramBot extends TelegramLongPollingBot {
-    private Message requestMessage = new Message();
-    private final SendMessage response = new SendMessage();
     private final String botUsername;
     private final String botToken;
     private final UserRepository userRepository;
@@ -36,7 +35,8 @@ public class TelegramBot extends TelegramLongPollingBot {
 
     @Override
     public void onUpdateReceived(Update update) {
-        requestMessage = update.getMessage();
+        SendMessage response = new SendMessage();
+        Message requestMessage = update.getMessage();
         Long chatId = requestMessage.getChatId();
         response.setChatId(chatId.toString());
         log.debug(requestMessage.getText());
@@ -65,8 +65,17 @@ public class TelegramBot extends TelegramLongPollingBot {
 
         if (requestMessage.getText().equals("/notify")) {
             try {
-                defaultMsg(response, "Starting cryptocurrency check...");
-                //starting logic
+                Optional<User> user = userRepository.findUserByChatId(chatId);
+                if (user.isEmpty()) {
+                    defaultMsg(response, "You haven't been joined yet, send me a '/start' message");
+                } else if (!user.get().isSubscribed()){
+                    User updateUser = user.get();
+                    updateUser.setSubscribed(true);
+                    userRepository.save(updateUser);
+                    defaultMsg(response, "Starting cryptocurrency check...");
+                } else {
+                    defaultMsg(response, "You are already subscribed for updates");
+                }
             } catch (TelegramApiException e) {
                 throw new RuntimeException(e);
             }
@@ -74,8 +83,11 @@ public class TelegramBot extends TelegramLongPollingBot {
 
         if (requestMessage.getText().equals("/restart")) {
             try {
+                if (PriceCheckService.prices.get(chatId) == null) {
+                    defaultMsg(response, "You are not subscribed yet, send me a '/notify' message to receive updates");
+                }
+                PriceCheckService.prices.remove(chatId);
                 defaultMsg(response, "Restarting cryptocurrency check...");
-                //logic of restart
             } catch (TelegramApiException e) {
                 throw new RuntimeException(e);
             }

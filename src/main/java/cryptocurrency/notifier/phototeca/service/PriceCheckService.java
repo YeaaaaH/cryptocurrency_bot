@@ -1,5 +1,6 @@
 package cryptocurrency.notifier.phototeca.service;
 
+import cryptocurrency.notifier.phototeca.bot.TelegramBot;
 import cryptocurrency.notifier.phototeca.model.RequestData;
 import cryptocurrency.notifier.phototeca.model.User;
 import cryptocurrency.notifier.phototeca.repository.UserRepository;
@@ -10,6 +11,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -19,8 +22,8 @@ import java.util.Map;
 
 @Service
 public class PriceCheckService {
-
-    private Map<Long, HashMap<String, BigDecimal>> prices = new HashMap<>();
+//TODO implement redis HSET instead
+    public static Map<Long, HashMap<String, BigDecimal>> prices = new HashMap<>();
 
     @Value("${crypto.price.url}")
     private String url;
@@ -29,10 +32,12 @@ public class PriceCheckService {
     private BigDecimal N;
     private final RestTemplate restTemplate;
     private final UserRepository userRepository;
+    private final TelegramBot telegramBot;
 
-    public PriceCheckService(RestTemplate restTemplate, UserRepository userRepository) {
+    public PriceCheckService(RestTemplate restTemplate, UserRepository userRepository, TelegramBot telegramBot) {
         this.restTemplate = restTemplate;
         this.userRepository = userRepository;
+        this.telegramBot = telegramBot;
     }
 
     @Scheduled(fixedRateString = "${fixedRate.in.milliseconds}")
@@ -46,7 +51,9 @@ public class PriceCheckService {
                 Long chatId = user.getChatId();
                 HashMap<String, BigDecimal> innerPrices = prices.get(chatId);
                 if (innerPrices == null) {
-                    requestData.forEach(data -> innerPrices.put(data.getSymbol(), data.getPrice()));
+                    prices.put(chatId, new HashMap<>());
+                    sendInitMessageToUser(chatId);
+                    requestData.forEach(data -> prices.get(chatId).put(data.getSymbol(), data.getPrice()));
                 } else {
                     Map<String, BigDecimal> changedPrices = new HashMap<>();
                     requestData.forEach(data -> {
@@ -71,15 +78,24 @@ public class PriceCheckService {
     }
 
     public void sendMessageToUser(Long chatId, Map<String, BigDecimal> changedPrices) {
-        System.out.println("-----------------------------------------------");
-        System.out.println("------------Started for: " + chatId + "----------------------");
-        changedPrices.entrySet().forEach(System.out::println);
-        System.out.println("------------Finished for: " + chatId + "----------------------");
-        System.out.println("-----------------------------------------------");
+        SendMessage message = new SendMessage();
+        message.setChatId(chatId);
+        message.setText("Percentage changes: COIN-AMOUNT" + "\n" +  changedPrices.entrySet());
+        try {
+            telegramBot.execute(message);
+        } catch (TelegramApiException e) {
+            throw new RuntimeException(e);
+        }
     }
 
-    public void restartPrices(Long chatId) {
-        HashMap<String, BigDecimal> innerPrices = prices.get(chatId);
-        innerPrices.clear();
+    public void sendInitMessageToUser(Long chatId) {
+        SendMessage message = new SendMessage();
+        message.setChatId(chatId);
+        message.setText("Initial prices set up..." + "\n" + "Loading price data for coins");
+        try {
+            telegramBot.execute(message);
+        } catch (TelegramApiException e) {
+            throw new RuntimeException(e);
+        }
     }
 }
