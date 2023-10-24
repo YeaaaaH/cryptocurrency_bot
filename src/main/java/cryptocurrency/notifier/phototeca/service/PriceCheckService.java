@@ -22,7 +22,7 @@ import java.util.Map;
 
 @Service
 public class PriceCheckService {
-//TODO implement redis HSET instead
+    //TODO implement redis HSET instead
     public static Map<Long, HashMap<String, BigDecimal>> prices = new HashMap<>();
 
     @Value("${crypto.price.url}")
@@ -43,33 +43,19 @@ public class PriceCheckService {
     @Scheduled(fixedRateString = "${fixedRate.in.milliseconds}")
     public void checkCryptocurrencyPrice() {
         List<User> subscribedUsers = userRepository.findBySubscribedTrue();
-        ResponseEntity<List<RequestData>> rateResponse =
-                restTemplate.exchange(url, HttpMethod.GET, null, new ParameterizedTypeReference<>() {});
-        List<RequestData> requestData = rateResponse.getBody();
+        List<RequestData> requestData = getDataFromApi();
         if (requestData != null) {
             subscribedUsers.forEach(user -> {
                 Long chatId = user.getChatId();
                 HashMap<String, BigDecimal> innerPrices = prices.get(chatId);
                 if (innerPrices == null) {
                     prices.put(chatId, new HashMap<>());
-                    sendInitMessageToUser(chatId);
+                    sendMessageToUser(chatId, null);
                     requestData.forEach(data -> prices.get(chatId).put(data.getSymbol(), data.getPrice()));
                 } else {
                     Map<String, BigDecimal> changedPrices = new HashMap<>();
                     requestData.forEach(data -> {
-                        String symbol = data.getSymbol();
-                        BigDecimal currentPrice = data.getPrice();
-                        BigDecimal initialPrice = innerPrices.get(symbol);
-
-                        if (initialPrice.compareTo(BigDecimal.ZERO) != 0) {
-                            BigDecimal priceChange = ((currentPrice.subtract(initialPrice)).divide(initialPrice, 9, RoundingMode.HALF_UP)).multiply(BigDecimal.valueOf(100));
-
-                            if (priceChange.abs().compareTo(N) >= 0) {
-                                changedPrices.put(symbol, priceChange);
-                            }
-                        } else if (initialPrice.compareTo(BigDecimal.ZERO) == 0 && currentPrice.compareTo(BigDecimal.ZERO) != 0) {
-                            changedPrices.put(symbol, BigDecimal.valueOf(100));
-                        }
+                        processPricesDifference(data, innerPrices, changedPrices);
                     });
                     sendMessageToUser(chatId, changedPrices);
                 }
@@ -77,21 +63,47 @@ public class PriceCheckService {
         }
     }
 
-    public void sendMessageToUser(Long chatId, Map<String, BigDecimal> changedPrices) {
-        SendMessage message = new SendMessage();
-        message.setChatId(chatId);
-        message.setText("Percentage changes: COIN-AMOUNT" + "\n" +  changedPrices.entrySet());
-        try {
-            telegramBot.execute(message);
-        } catch (TelegramApiException e) {
-            throw new RuntimeException(e);
+    private void processPricesDifference(RequestData data, HashMap<String, BigDecimal> innerPrices, Map<String, BigDecimal> changedPrices) {
+        String symbol = data.getSymbol();
+        BigDecimal currentPrice = data.getPrice();
+        BigDecimal initialPrice = innerPrices.get(symbol);
+        BigDecimal priceChange = findPriceDifference(currentPrice, initialPrice);
+        if (priceChange.abs().compareTo(N) >= 0) {
+            changedPrices.put(symbol, priceChange);
         }
     }
 
-    public void sendInitMessageToUser(Long chatId) {
+    private BigDecimal findPriceDifference(BigDecimal initialPrice, BigDecimal currentPrice) {
+        BigDecimal priceChange;
+        if (initialPrice.compareTo(BigDecimal.ZERO) != 0) {
+            priceChange = ((currentPrice.subtract(initialPrice)).divide(initialPrice, 9, RoundingMode.HALF_UP)).multiply(BigDecimal.valueOf(100));
+        } else if (initialPrice.compareTo(BigDecimal.ZERO) == 0 && currentPrice.compareTo(BigDecimal.ZERO) != 0) {
+            priceChange = BigDecimal.valueOf(100);
+        } else {
+            priceChange = BigDecimal.ZERO;
+        }
+        return priceChange;
+    }
+
+    private List<RequestData> getDataFromApi() {
+        ResponseEntity<List<RequestData>> rateResponse =
+                restTemplate.exchange(url, HttpMethod.GET, null, new ParameterizedTypeReference<>() {
+                });
+        return rateResponse.getBody();
+    }
+
+    public void sendMessageToUser(Long chatId, Map<String, BigDecimal> changedPrices) {
         SendMessage message = new SendMessage();
         message.setChatId(chatId);
-        message.setText("Initial prices set up..." + "\n" + "Loading price data for coins");
+        if (changedPrices != null) {
+            message.setText("Percentage changes: COIN-AMOUNT" + "\n" + changedPrices.entrySet());
+        } else {
+            message.setText("Initial prices set up..." + "\n" + "Loading price data for coins");
+        }
+        sendMessage(message);
+    }
+
+    private void sendMessage(SendMessage message) {
         try {
             telegramBot.execute(message);
         } catch (TelegramApiException e) {

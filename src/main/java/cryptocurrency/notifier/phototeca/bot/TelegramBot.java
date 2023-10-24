@@ -1,8 +1,8 @@
 package cryptocurrency.notifier.phototeca.bot;
 
 import cryptocurrency.notifier.phototeca.model.User;
-import cryptocurrency.notifier.phototeca.repository.UserRepository;
-import cryptocurrency.notifier.phototeca.service.PriceCheckService;
+import cryptocurrency.notifier.phototeca.service.UserService;
+import jakarta.annotation.PostConstruct;
 import lombok.Getter;
 import lombok.extern.log4j.Log4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,8 +13,11 @@ import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Message;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
+import org.telegram.telegrambots.updatesreceivers.DefaultBotSession;
 
 import java.util.Optional;
+
+import static cryptocurrency.notifier.phototeca.service.PriceCheckService.prices;
 
 @Getter
 @Log4j
@@ -22,76 +25,32 @@ import java.util.Optional;
 public class TelegramBot extends TelegramLongPollingBot {
     private final String botUsername;
     private final String botToken;
-    private final UserRepository userRepository;
+    private final UserService userService;
 
-    public TelegramBot(TelegramBotsApi telegramBotsApi, @Value("${bot.username}") String botUsername,
-                       @Value("${bot.token}") String botToken,
-                       UserRepository userRepository) throws TelegramApiException {
+    public TelegramBot(UserService userService, @Value("${bot.username}") String botUsername,
+                       @Value("${bot.token}") String botToken) {
+        this.userService = userService;
         this.botUsername = botUsername;
         this.botToken = botToken;
-        this.userRepository = userRepository;
-        telegramBotsApi.registerBot(this);
+    }
+
+    @PostConstruct
+    public void initBot() {
+        try {
+            TelegramBotsApi botsApi = new TelegramBotsApi(DefaultBotSession.class);
+            botsApi.registerBot(this);
+        } catch (TelegramApiException e) {
+            log.error("Error initializing Telegram Bot {}", e);
+            throw new RuntimeException(e);
+        }
     }
 
     @Override
     public void onUpdateReceived(Update update) {
-        SendMessage response = new SendMessage();
         Message requestMessage = update.getMessage();
-        Long chatId = requestMessage.getChatId();
-        response.setChatId(chatId.toString());
-        log.debug(requestMessage.getText());
-        if (requestMessage.getText().equals("/start")) {
-            try {
-                Optional<User> user = userRepository.findUserByChatId(chatId);
-                if (user.isEmpty()) {
-                    userRepository.save(User.builder()
-                            .chatId(requestMessage.getChatId())
-                            .telegramId(requestMessage.getFrom().getId())
-                            .firstName(requestMessage.getFrom().getFirstName())
-                            .lastName(requestMessage.getFrom().getLastName())
-                            .userName(requestMessage.getFrom().getUserName())
-                            .languageCode(requestMessage.getFrom().getLanguageCode())
-                            .build()
-                    );
-                    defaultMsg(response, "Welcome! You have been added to our community. ");
-                } else {
-                    defaultMsg(response, "You're already with us");
-                }
-
-            } catch (TelegramApiException e) {
-                throw new RuntimeException(e);
-            }
-        }
-
-        if (requestMessage.getText().equals("/notify")) {
-            try {
-                Optional<User> user = userRepository.findUserByChatId(chatId);
-                if (user.isEmpty()) {
-                    defaultMsg(response, "You haven't been joined yet, send me a '/start' message");
-                } else if (!user.get().isSubscribed()){
-                    User updateUser = user.get();
-                    updateUser.setSubscribed(true);
-                    userRepository.save(updateUser);
-                    defaultMsg(response, "Starting cryptocurrency check...");
-                } else {
-                    defaultMsg(response, "You are already subscribed for updates");
-                }
-            } catch (TelegramApiException e) {
-                throw new RuntimeException(e);
-            }
-        }
-
-        if (requestMessage.getText().equals("/restart")) {
-            try {
-                if (PriceCheckService.prices.get(chatId) == null) {
-                    defaultMsg(response, "You are not subscribed yet, send me a '/notify' message to receive updates");
-                }
-                PriceCheckService.prices.remove(chatId);
-                defaultMsg(response, "Restarting cryptocurrency check...");
-            } catch (TelegramApiException e) {
-                throw new RuntimeException(e);
-            }
-        }
+        SendMessage response = new SendMessage();
+        response.setChatId(requestMessage.getChatId().toString());
+        handleMessage(requestMessage, response);
     }
 
     @Override
@@ -99,8 +58,62 @@ public class TelegramBot extends TelegramLongPollingBot {
         return botUsername;
     }
 
-    private void defaultMsg(SendMessage response, String msg) throws TelegramApiException {
-        response.setText(msg);
-        execute(response);
+    private void defaultMsg(SendMessage response, String responseMessage) {
+        response.setText(responseMessage);
+        try {
+            execute(response);
+        } catch (TelegramApiException e) {
+            throw new RuntimeException(e);
+        }
+    }
+//TODO refactor string responseMessages into constants
+    private void handleMessage(Message requestMessage, SendMessage response) {
+        Long chatId = requestMessage.getChatId();
+        if (requestMessage.getText().equals("/start")) {
+            handleStartMessage(requestMessage, response, chatId);
+        } else if (requestMessage.getText().equals("/notify")) {
+            handleNotifyMessage(response, chatId);
+        } else if (requestMessage.getText().equals("/restart")) {
+            handleRestartMessage(response, chatId);
+        }
+    }
+
+    private void handleStartMessage(Message requestMessage, SendMessage response, Long chatId) {
+        String responseMessage;
+        Optional<User> user = userService.findUserByChatId(chatId);
+        if (user.isEmpty()) {
+            userService.saveUser(requestMessage);
+            responseMessage = "Welcome! You have been added to our community";
+        } else {
+            responseMessage = "You're already with us";
+        }
+        defaultMsg(response, responseMessage);
+    }
+
+    private void handleNotifyMessage(SendMessage response, Long chatId) {
+        String responseMessage;
+        Optional<User> user = userService.findUserByChatId(chatId);
+        if (user.isEmpty()) {
+            responseMessage = "You haven't been joined yet, send me a '/start' message";
+        } else if (!user.get().isSubscribed()) {
+            User updateUser = user.get();
+            updateUser.setSubscribed(true);
+            userService.updateUser(updateUser);
+            responseMessage = "Starting cryptocurrency check...";
+        } else {
+            responseMessage = "You've already been subscribed for updates";
+        }
+        defaultMsg(response, responseMessage);
+    }
+
+    private void handleRestartMessage(SendMessage response, Long chatId) {
+        String responseMessage;
+        if (prices.get(chatId) == null) {
+            responseMessage = "You are not subscribed yet, send me a '/notify' message to receive updates";
+        } else {
+            prices.remove(chatId);
+            responseMessage = "Restarting cryptocurrency check...";
+        }
+        defaultMsg(response, responseMessage);
     }
 }
