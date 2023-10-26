@@ -23,15 +23,15 @@ import static cryptocurrency.notifier.phototeca.service.PriceCheckService.prices
 @Log4j
 @Component
 public class TelegramBot extends TelegramLongPollingBot {
-    private final String botUsername;
-    private final String botToken;
+    @Value("${bot.username}")
+    private String botUsername;
+    @Value("${bot.token}")
+    private String botToken;
     private final UserService userService;
 
-    public TelegramBot(UserService userService, @Value("${bot.username}") String botUsername,
-                       @Value("${bot.token}") String botToken) {
+    public TelegramBot(UserService userService) {
         this.userService = userService;
-        this.botUsername = botUsername;
-        this.botToken = botToken;
+
     }
 
     @PostConstruct
@@ -58,6 +58,11 @@ public class TelegramBot extends TelegramLongPollingBot {
         return botUsername;
     }
 
+    @Override
+    public String getBotToken() {
+        return botToken;
+    }
+//TODO implement queue to process messages
     private void defaultMsg(SendMessage response, String responseMessage) {
         response.setText(responseMessage);
         try {
@@ -82,7 +87,7 @@ public class TelegramBot extends TelegramLongPollingBot {
         String responseMessage;
         Optional<User> user = userService.findUserByChatId(chatId);
         if (user.isEmpty()) {
-            userService.saveUser(requestMessage);
+            userService.saveTgUser(requestMessage);
             responseMessage = "Welcome! You have been added to our community";
         } else {
             responseMessage = "You're already with us";

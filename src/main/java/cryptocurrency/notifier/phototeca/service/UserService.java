@@ -19,7 +19,7 @@ public class UserService {
         return userRepository.findUserByChatId(chatId);
     }
 
-    public void saveUser(Message requestMessage) {
+    public void saveTgUser(Message requestMessage) {
         userRepository.save(User.builder()
                 .chatId(requestMessage.getChatId())
                 .telegramId(requestMessage.getFrom().getId())

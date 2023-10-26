@@ -43,23 +43,25 @@ public class PriceCheckService {
     @Scheduled(fixedRateString = "${fixedRate.in.milliseconds}")
     public void checkCryptocurrencyPrice() {
         List<User> subscribedUsers = userRepository.findBySubscribedTrue();
-        List<RequestData> requestData = getDataFromApi();
-        if (requestData != null) {
-            subscribedUsers.forEach(user -> {
-                Long chatId = user.getChatId();
-                HashMap<String, BigDecimal> innerPrices = prices.get(chatId);
-                if (innerPrices == null) {
-                    prices.put(chatId, new HashMap<>());
-                    sendMessageToUser(chatId, null);
-                    requestData.forEach(data -> prices.get(chatId).put(data.getSymbol(), data.getPrice()));
-                } else {
-                    Map<String, BigDecimal> changedPrices = new HashMap<>();
-                    requestData.forEach(data -> {
-                        processPricesDifference(data, innerPrices, changedPrices);
-                    });
-                    sendMessageToUser(chatId, changedPrices);
-                }
-            });
+        if (!subscribedUsers.isEmpty()) {
+            List<RequestData> requestData = getDataFromApi();
+            if (requestData != null) {
+                subscribedUsers.forEach(user -> {
+                    Long chatId = user.getChatId();
+                    HashMap<String, BigDecimal> innerPrices = prices.get(chatId);
+                    if (innerPrices == null) {
+                        prices.put(chatId, new HashMap<>());
+                        sendMessageToUser(chatId, null);
+                        requestData.forEach(data -> prices.get(chatId).put(data.getSymbol(), data.getPrice()));
+                    } else {
+                        Map<String, BigDecimal> changedPrices = new HashMap<>();
+                        requestData.forEach(data -> {
+                            processPricesDifference(data, innerPrices, changedPrices);
+                        });
+                        sendMessageToUser(chatId, changedPrices);
+                    }
+                });
+            }
         }
     }
 
